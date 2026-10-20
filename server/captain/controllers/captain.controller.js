@@ -2,6 +2,9 @@ const captainModel = require('../models/captain.model');
 const blacklisttokenModel = require('../models/blacklistedtoken.model');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { subscribeToQueue } = require('../services/rabbit');
+
+const pendingRequests = [];
 
 
 module.exports.register = async (req, res) => {
@@ -90,3 +93,30 @@ module.exports.toggleAvailability = async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 }
+
+module.exports.waitForNewRide = async (req, res) => {
+    req.setTimeout(30000, () => {
+        const index = pendingRequests.indexOf(res);
+        if (index !== -1) {
+            pendingRequests.splice(index, 1);
+        }
+        if (!res.headersSent) {
+            res.status(204).end();
+        }
+    });
+
+    pendingRequests.push(res);
+};
+
+subscribeToQueue('new-ride', (data) => {
+    try {
+        const rideData = JSON.parse(data);
+        pendingRequests.splice(0).forEach((res) => {
+            if (!res.headersSent) {
+                res.json(rideData);
+            }
+        });
+    } catch (error) {
+        console.error('Failed to process new ride event', error.message);
+    }
+});
